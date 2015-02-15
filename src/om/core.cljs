@@ -8,6 +8,7 @@
 (def ^{:dynamic true :private true} *parent* nil)
 (def ^{:dynamic true :private true} *instrument* nil)
 (def ^{:dynamic true :private true} *descriptor* nil)
+(def ^{:dynamic true :private true} *descriptors* nil)
 (def ^{:dynamic true :private true} *state* nil)
 (def ^{:dynamic true :private true} *root-key* nil)
 
@@ -289,7 +290,8 @@
                          (merge
                            (when (satisfies? IInitState c)
                              (init-state c))
-                           (dissoc istate ::id))}]
+                           (dissoc istate ::id))
+                         :__om_descriptors (atom {})}]
          (aset props "__om_init_state" nil)
          ret)))
    :shouldComponentUpdate
@@ -383,8 +385,10 @@
    (fn []
      (this-as this
        (let [c (children this)
-             props (.-props this)]
+             props (.-props this)
+             state (.-state this)]
          (binding [*parent*     this
+                   *descriptors* (aget state "__om_descriptors")
                    *state*      (aget props "__om_app_state")
                    *instrument* (aget props "__om_instrument")
                    *descriptor* (aget props "__om_descriptor")
@@ -477,7 +481,8 @@
               spath  [:state-map (react-id this) :render-state]]
           (aset props "__om_init_state" nil)
           (swap! (get-gstate this) assoc-in spath state)
-          #js {:__om_id om-id})))
+          #js {:__om_id om-id
+               :__om_descriptors (atom {})})))
     :componentWillMount
     (fn []
       (this-as this
@@ -874,14 +879,14 @@
   (aget (.-state owner) "__om_id"))
 
 (defn get-descriptor
-  ([f] (get-descriptor f nil))
-  ([f descriptor]
-   (when (nil? (aget f "om$descriptor"))
-     (aset f "om$descriptor"
-       (js/React.createFactory
-         (js/React.createClass
-           (or descriptor *descriptor* pure-descriptor)))))
-   (aget f "om$descriptor")))
+  ([descriptors f] (get-descriptor descriptors f nil))
+  ([descriptors f descriptor]
+   (when-not (contains? @descriptors f)
+     (swap! descriptors assoc
+       f (js/React.createFactory
+           (js/React.createClass
+             (or descriptor *descriptor* pure-descriptor)))))
+   (get @descriptors f)))
 
 (defn getf
   ([f cursor]
@@ -906,7 +911,7 @@
    (cond
      (nil? m)
      (let [shared (get-shared *parent*)
-           ctor   (get-descriptor (getf f cursor))]
+           ctor   (get-descriptor *descriptors* (getf f cursor))]
        (ctor #js {:__om_cursor cursor
                   :__om_shared shared
                   :__om_root_key *root-key*
@@ -932,7 +937,8 @@
                      (not (nil? key-fn)) (key-fn cursor')
                      :else (get m :react-key))
            shared  (or (:shared m) (get-shared *parent*))
-           ctor    (get-descriptor (getf f cursor' opts) (:descriptor m))]
+           ctor    (get-descriptor *descriptors*
+                     (getf f cursor' opts) (:descriptor m))]
        (ctor #js {:__om_cursor cursor'
                   :__om_index (::index m)
                   :__om_init_state init-state
@@ -1116,6 +1122,7 @@
           state (setup state watch-key tx-listen)
           adapt (or adapt identity)
           m     (dissoc options :target :tx-listen :path :adapt :raf)
+          descriptors (atom {})
           ret   (atom nil)
           rootf (fn rootf []
                   (swap! refresh-set disj rootf)
@@ -1129,6 +1136,7 @@
                     (when-not (-get-property state watch-key :skip-render-root)
                       (let [c (dom/render
                                 (binding [*descriptor* descriptor
+                                          *descriptors* descriptors
                                           *instrument* instrument
                                           *state*      state
                                           *root-key*   watch-key]
